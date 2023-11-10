@@ -1,0 +1,119 @@
+
+# load the realtime components
+
+	loadrt [KINS]KINEMATICS
+	loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EMCMOT]SERVO_PERIOD num_joints=[KINS]JOINTS
+	loadrt debounce cfg=6
+	loadrt remora
+	loadrt estop_latch
+	loadrt and2 count=1
+	loadrt or2 count=1
+
+# load user interfaces
+
+	loadusr -W hal_manualtoolchange
+
+# add the remora and motion functions to threads
+
+	addf remora.read servo-thread
+	addf motion-command-handler servo-thread
+	addf motion-controller servo-thread
+	addf remora.update-freq servo-thread
+	addf remora.write servo-thread
+	addf debounce.0 servo-thread
+	addf estop-latch.0 servo-thread
+	addf and2.0 servo-thread
+	addf or2.0 servo-thread
+	setp debounce.0.delay 5
+
+# estop loopback, SPI comms enable and feedback
+	net user-enable-out 	<= iocontrol.0.user-enable-out		=> remora.SPI-enable
+	net user-request-enable <= iocontrol.0.user-request-enable	=> remora.SPI-reset
+	net remora-status 	<= remora.SPI-status 			=> and2.0.in0
+	net external-stop-raw	remora.input.6 =>  debounce.0.3.in
+	net external-stop 	<= debounce.0.3.out				=> and2.0.in1
+	net saff-status 	<= and2.0.out	=> iocontrol.0.emc-enable-in
+
+# Joint 0 setup
+
+	setp remora.joint.0.scale 		[JOINT_0]SCALE
+	setp remora.joint.0.maxaccel 	[JOINT_0]STEPGEN_MAXACCEL
+
+	net xpos-cmd 		<= joint.0.motor-pos-cmd 	=> remora.joint.0.pos-cmd  
+	net j0pos-fb 		<= remora.joint.0.pos-fb 	=> joint.0.motor-pos-fb
+	net j0enable 		<= joint.0.amp-enable-out 	=> remora.joint.0.enable
+
+
+# Joint 1 setup
+
+	setp remora.joint.1.scale 		[JOINT_1]SCALE
+	setp remora.joint.1.maxaccel 	[JOINT_1]STEPGEN_MAXACCEL
+
+	net j1pos-cmd 		<= joint.1.motor-pos-cmd 	=> remora.joint.1.pos-cmd
+	net j1pos-fb 		<= remora.joint.1.pos-fb 	=> joint.1.motor-pos-fb 
+	net j1enable 		<= joint.1.amp-enable-out 	=> remora.joint.1.enable
+
+
+# Joint 2 setup
+
+	setp remora.joint.2.scale 		[JOINT_2]SCALE
+	setp remora.joint.2.maxaccel 	[JOINT_2]STEPGEN_MAXACCEL
+
+	net j2pos-cmd 		<= joint.2.motor-pos-cmd 	=> remora.joint.2.pos-cmd
+	net j2pos-fb 		<= remora.joint.2.pos-fb 	=> joint.2.motor-pos-fb
+	net j2enable 		<= joint.2.amp-enable-out 	=> remora.joint.2.enable
+
+# end-stops
+
+	
+	net X-min-raw	remora.input.0  =>  debounce.0.0.in
+	net X-min       debounce.0.0.out => joint.0.home-sw-in
+	net Y-min-raw	remora.input.2  =>  debounce.0.1.in
+	net Y-min       debounce.0.1.out  => joint.1.home-sw-in
+	net Z-min-raw	remora.input.4  =>  debounce.0.2.in
+	net Z-min       debounce.0.2.out  => joint.2.home-sw-in
+
+# spindle setup
+	loadrt lincurve personality=6
+    addf lincurve.0 servo-thread
+	loadrt scale count=1	
+	addf scale.0 servo-thread
+	setp scale.0.gain 0.00416 #this will make m3 s1000 give 100% output and m3 s100 10%
+	net spindle-speed-scale spindle.0.speed-out => scale.0.in
+
+	setp lincurve.0.x-val-00 14
+    setp lincurve.0.y-val-00 6.25
+	setp lincurve.0.x-val-01 28.25
+	setp lincurve.0.y-val-01 12.5
+	setp lincurve.0.x-val-02 57.5
+	setp lincurve.0.y-val-02 25
+	setp lincurve.0.x-val-03 84.25
+	setp lincurve.0.y-val-03 50
+	setp lincurve.0.x-val-04 98.75
+	setp lincurve.0.y-val-04 75
+	setp lincurve.0.x-val-05 100
+	setp lincurve.0.y-val-05 100
+	
+	net spindle-speed-DAC scale.0.out  => lincurve.0.in
+	net spindle-speed-corrected lincurve.0.out => remora.SP.0
+	net spindle-on <= spindle.0.on => remora.output.9
+
+# fans
+	net spindle-on => remora.output.10
+	net spindle-on => remora.output.11
+
+# probe
+
+	net probe-raw remora.input.7  =>  debounce.0.4.in
+	net tool-setter-raw remora.input.8 => debounce.0.5.in
+	net probe-in debounce.0.4.out => or2.0.in0
+	net tool-setter-in debounce.0.5.out => or2.0.in1   
+	net probes or2.0.out => motion.probe-input
+
+# manual toolchange
+	net tool-change iocontrol.0.tool-change => hal_manualtoolchange.change
+	net tool-changed iocontrol.0.tool-changed <= hal_manualtoolchange.changed
+	net tool-number iocontrol.0.tool-prep-number => hal_manualtoolchange.number
+	net tool-prepare-loopback iocontrol.0.tool-prepare => iocontrol.0.tool-prepared
+
+
